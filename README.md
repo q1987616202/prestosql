@@ -15,6 +15,12 @@
    </a>
 </p>
 
+## Presto Dynamic Catalog
+
+基于zookeeper实现presto catalog热加载，提供rest api进行catalog的curd， 不需重启presto集群
+
+Presto Dynamic Catalog, based ZooKeeper, rest api is provided for catalog curd, not need to restart.
+
 ## Requirements
 
 * Mac OS X or Linux
