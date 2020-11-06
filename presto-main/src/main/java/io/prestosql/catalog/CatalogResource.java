@@ -85,6 +85,21 @@ public class CatalogResource {
         }
     }
 
+    @GET
+    @Path("/{catalogName}")
+    @ResourceSecurity(PUBLIC)
+    @Consumes(MediaType.APPLICATION_JSON)
+    @Produces(MediaType.APPLICATION_JSON)
+    public CatalogInfo detail(@PathParam("catalogName") String catalogName) {
+        try {
+            byte[] bytes = config.getCuratorFramework().getData().forPath(catalogZkPath + "/" + catalogName);
+            return JsonUtil.toObj(new String(bytes, StandardCharsets.UTF_8), CatalogInfo.class);
+        } catch (Exception e) {
+            log.error("failed get catalog detail");
+            throw DynamicCatalogException.newInstance("failed get catalog detail", e);
+        }
+    }
+
     /**
      * 保存catalog
      * 新增或更新

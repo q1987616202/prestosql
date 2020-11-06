@@ -42,6 +42,7 @@ public class DynamicCatalogStoreConfig {
     private String zkAddress;
     private String nodePath;
     private String namespace;
+    private String restartCommand;
     private final ObjectMapper objectMapper = new ObjectMapper();
     private CuratorFramework curatorFramework;
 
@@ -70,6 +71,16 @@ public class DynamicCatalogStoreConfig {
     public DynamicCatalogStoreConfig setCatalogZkPath(String nodePath) {
         this.nodePath = nodePath != null && !"".equals(nodePath.trim()) ? nodePath : "/catalog/meta";
         return this;
+    }
+
+    @Config("cluster.restart.command")
+    public DynamicCatalogStoreConfig setRestartCommand(String restartCommand) {
+        this.restartCommand  = restartCommand;
+        return this;
+    }
+
+    public String getRestartCommand() {
+        return restartCommand;
     }
 
     public String getCatalogZkPath() {

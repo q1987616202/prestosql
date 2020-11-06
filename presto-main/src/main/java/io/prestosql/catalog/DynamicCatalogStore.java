@@ -16,9 +16,11 @@ package io.prestosql.catalog;
 import static com.google.common.base.Preconditions.checkState;
 import static com.google.common.base.Strings.nullToEmpty;
 import static io.airlift.discovery.client.ServiceAnnouncement.serviceAnnouncement;
+import static java.util.Objects.requireNonNull;
 
-import java.io.IOException;
+import java.io.*;
 import java.util.*;
+import java.util.concurrent.CopyOnWriteArraySet;
 import java.util.concurrent.atomic.AtomicBoolean;
 import javax.inject.Inject;
 
@@ -32,6 +34,9 @@ import io.airlift.log.Logger;
 import io.prestosql.connector.CatalogName;
 import io.prestosql.connector.ConnectorManager;
 import io.prestosql.metadata.InternalNodeManager;
+import io.prestosql.metadata.NodeState;
+import io.prestosql.server.ServerConfig;
+import io.prestosql.server.ServerInfoResource;
 import org.apache.curator.framework.CuratorFramework;
 import org.apache.curator.framework.recipes.cache.ChildData;
 import org.apache.curator.framework.recipes.cache.TreeCache;
@@ -53,17 +58,28 @@ public class DynamicCatalogStore {
     private final DynamicCatalogStoreConfig dynamicCatalogStoreConfig;
     private final Announcer announcer;
     private final InternalNodeManager nodeManager;
+    private final ServerInfoResource serverInfoResource;
     private final ObjectMapper objectMapper = new ObjectMapper();
+
+    /**
+     * If recreate the previously deleted catalog, need to restart the presto cluster, prevent memory leaks
+     */
+    private final CopyOnWriteArraySet<String> deletedCatalogSet = new CopyOnWriteArraySet<>();
+    private final boolean isCoordinator;
 
     @Inject
     public DynamicCatalogStore(ConnectorManager connectorManager,
                                DynamicCatalogStoreConfig config,
                                Announcer announcer,
-                               InternalNodeManager nodeManager) {
+                               InternalNodeManager nodeManager,
+                               ServerInfoResource serverInfoResource,
+                               ServerConfig serverConfig) {
         this.connectorManager = connectorManager;
         this.dynamicCatalogStoreConfig = config;
         this.announcer = announcer;
         this.nodeManager = nodeManager;
+        this.serverInfoResource = serverInfoResource;
+        this.isCoordinator = requireNonNull(serverConfig, "serverConfig is null").isCoordinator();
     }
 
     public boolean areCatalogsLoaded() {
@@ -90,7 +106,6 @@ public class DynamicCatalogStore {
                 throw DynamicCatalogException.newInstance("load catalog from zk error", e);
             }
         });
-        // 设置zk监听动态刷新catalog
         CuratorFramework curatorFramework = dynamicCatalogStoreConfig.getCuratorFramework();
         TreeCache cache = TreeCache.newBuilder(curatorFramework, dynamicCatalogStoreConfig.getCatalogZkPath())
                 .setCacheData(false).build();
@@ -128,9 +143,10 @@ public class DynamicCatalogStore {
     private void deleteCatalog(ChildData childData) {
         String catalogName = childData.getPath()
                 .replace(dynamicCatalogStoreConfig.getCatalogZkPath() + "/", "");
-        if (catalogName.contains("/")) {
+        if (catalogName.contains(File.separator)) {
             return;
         }
+        deletedCatalogSet.add(catalogName);
         log.info("-- Removing catalog %s", catalogName);
         connectorManager.dropConnection(catalogName);
         log.info("-- Removed catalog %s", catalogName);
@@ -142,6 +158,22 @@ public class DynamicCatalogStore {
         }
         CatalogInfo catalogInfo = node2CatalogInfo(childData);
         log.info("-- Adding catalog %s", catalogInfo.getCatalogName());
+        // If re-create the previously deleted catalog, need to restart the cluster
+        if (deletedCatalogSet.contains(catalogInfo.getCatalogName())) {
+            // curl -v -XPUT --data '"SHUTTING_DOWN"' -H "Content-type: application/json" http://ip:port/v1/info/state
+            if (isCoordinator) {
+                // both a coordinator and worker, restart using the configured command
+                String restartCommand = dynamicCatalogStoreConfig.getRestartCommand();
+                if (restartCommand != null && !"".equals(restartCommand.trim())) {
+                    restart(restartCommand);
+                    return;
+                }
+                throw DynamicCatalogException.newInstance("please restart the cluster manually or rename this catalogName[%s]", catalogInfo.getCatalogName());
+            }
+            // worker node restart
+            serverInfoResource.updateState(NodeState.SHUTTING_DOWN);
+            serverInfoResource.updateState(NodeState.ACTIVE);
+        }
         CatalogName connectorId;
         try {
             connectorId = loadCatalog(catalogInfo);
@@ -150,6 +182,48 @@ public class DynamicCatalogStore {
             return;
         }
         updateConnectorIdAnnouncement(announcer, connectorId, nodeManager);
+    }
+
+    private void restart(String restartCommand) {
+        Process process;
+        try {
+            process = Runtime.getRuntime().exec(restartCommand);
+        } catch (IOException e) {
+            throw DynamicCatalogException.newInstance("exec restart command error", e);
+        }
+        try (InputStream inputStream = process.getInputStream();
+             InputStreamReader inputStreamReader = new InputStreamReader(inputStream);
+             BufferedReader reader = new BufferedReader(inputStreamReader)) {
+            String data;
+            while ((data = reader.readLine()) != null) {
+                log.info(data + "\n");
+            }
+            int exitValue = process.waitFor();
+            if (exitValue != 0) {
+                log.error("restart cluster error, with exit value %d", exitValue);
+                handleCommandError(process);
+            }
+        } catch (IOException e) {
+            log.error("restart cluster IOException");
+            throw DynamicCatalogException.newInstance("restart cluster IOException", e);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            log.error("restart cluster error, please restart the cluster manually");
+            throw DynamicCatalogException.newInstance("restart cluster error, please restart the cluster manually", e);
+        }
+    }
+
+    private void handleCommandError(Process process) {
+        try (InputStream inputStream = process.getErrorStream();
+             InputStreamReader inputStreamReader = new InputStreamReader(inputStream);
+             BufferedReader reader = new BufferedReader(inputStreamReader)) {
+            String data;
+            while ((data = reader.readLine()) != null) {
+                log.error(data + "\n");
+            }
+        } catch (IOException e) {
+            // ignore
+        }
     }
 
     private CatalogInfo node2CatalogInfo(ChildData childData) {
