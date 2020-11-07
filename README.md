@@ -23,11 +23,7 @@
 
 基于zookeeper实现presto catalog热加载，提供rest api进行catalog的curd，不需重启presto集群
 
-如果重新创建以前删除过的catalog，则需要重启presto群集，有类加载器的问题，防止内存泄漏
-
 Presto Dynamic Catalog, based ZooKeeper, rest api is provided for catalog curd, not need to restart.
-
-If recreate the previously deleted catalog, need to restart the presto cluster, prevent memory leaks
 
 * Presto, 345
 * zookeeper, 3.4.14

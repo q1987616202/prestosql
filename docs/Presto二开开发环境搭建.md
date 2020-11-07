@@ -33,11 +33,11 @@ docker create --restart always --name presto \
 -v `pwd`/data:/data/presto \
 -v `pwd`/etc:/usr/lib/presto/etc \
 -v `pwd`/plugin:/usr/lib/presto/plugin \
--v `pwd`/presto-main-345.jar:/usr/lib/presto/lib/presto-main-345.jar \
 --add-host=hdspdev004.hand-china.com:172.23.16.60 \
 -p 29527:8080 \
 -p 29528:19565 \
 prestosql/presto:345
+docker cp /data/presto/presto-main-345.jar presto:/usr/lib/presto/lib
 docker start presto
 ```
 
@@ -148,8 +148,6 @@ node.data-dir=/data/presto
 catalog.zk.address=172.23.16.70:2181,172.23.16.71:2181,172.23.16.72:2181
 catalog.zk.namespace=presto
 catalog.zk.path=/catalog/meta
-# note: if install by docker, here is docker path
-cluster.restart.command=sh /usr/lib/presto/bin/launcher restart
 ```
 
 * catalog.zk.address
@@ -157,9 +155,7 @@ cluster.restart.command=sh /usr/lib/presto/bin/launcher restart
 * catalog.zk.namespace
     - namespace, 默认为presto，做数据隔离使用
 * catalog.zk.path
-    - catalog的储存node path
-* cluster.restart.command
-    - 重启presto集群的命令
+    - catalog的储存node path，默认为catalog/meta，最终path=catalog.zk.namespace/catalog.zk.path，即默认为presto/catalog/meta
 
 ### 4.2 Catalog Rest API
 

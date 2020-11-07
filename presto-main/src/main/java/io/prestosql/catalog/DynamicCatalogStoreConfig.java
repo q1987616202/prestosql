@@ -15,12 +15,8 @@ package io.prestosql.catalog;
 
 import static java.util.Objects.requireNonNull;
 
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
 import java.util.Objects;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import io.airlift.configuration.Config;
 import io.airlift.log.Logger;
 import org.apache.curator.RetryPolicy;
@@ -42,10 +38,7 @@ public class DynamicCatalogStoreConfig {
     private String zkAddress;
     private String nodePath;
     private String namespace;
-    private String restartCommand;
-    private final ObjectMapper objectMapper = new ObjectMapper();
     private CuratorFramework curatorFramework;
-
 
     @Config("catalog.zk.address")
     public DynamicCatalogStoreConfig setCatalogZkAddress(String zkAddress) {
@@ -73,46 +66,12 @@ public class DynamicCatalogStoreConfig {
         return this;
     }
 
-    @Config("cluster.restart.command")
-    public DynamicCatalogStoreConfig setRestartCommand(String restartCommand) {
-        this.restartCommand  = restartCommand;
-        return this;
-    }
-
-    public String getRestartCommand() {
-        return restartCommand;
-    }
-
     public String getCatalogZkPath() {
         return nodePath;
     }
 
-    public Map<String, CatalogInfo> getCatalogInfoMap() {
-        log.info("loading catalog from zookeeper");
-        return getCatalogInfoFromZk();
-    }
-
-    private Map<String, CatalogInfo> getCatalogInfoFromZk() {
-        createCuratorFramework();
-        Map<String, CatalogInfo> map = new HashMap<>(16);
-        try {
-            List<String> children = curatorFramework.getChildren().forPath(nodePath);
-            for (String catalogPath : children) {
-                byte[] bytes = curatorFramework.getData().forPath(nodePath + "/" + catalogPath);
-                if (bytes == null) {
-                    log.info("node path %s has no data", catalogPath);
-                    continue;
-                }
-                CatalogInfo catalogInfo = objectMapper.readValue(bytes, CatalogInfo.class);
-                map.put(catalogPath, catalogInfo);
-            }
-        } catch (Exception e) {
-            throw DynamicCatalogException.newInstance("get catalog from zk error", e);
-        }
-        return map;
-    }
-
     public CuratorFramework getCuratorFramework() {
+        createCuratorFramework();
         return curatorFramework;
     }
 

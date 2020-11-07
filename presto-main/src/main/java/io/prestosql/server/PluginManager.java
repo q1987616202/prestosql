@@ -13,12 +13,28 @@
  */
 package io.prestosql.server;
 
+import static com.google.common.base.Preconditions.checkState;
+import static io.prestosql.metadata.FunctionExtractor.extractFunctions;
+import static io.prestosql.server.PluginDiscovery.discoverPlugins;
+import static io.prestosql.server.PluginDiscovery.writePluginServices;
+import static java.util.Objects.requireNonNull;
+
+import java.io.File;
+import java.io.IOException;
+import java.net.URL;
+import java.util.*;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Supplier;
+import javax.annotation.concurrent.ThreadSafe;
+import javax.inject.Inject;
+
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Ordering;
 import io.airlift.log.Logger;
 import io.airlift.node.NodeInfo;
 import io.airlift.resolver.ArtifactResolver;
 import io.airlift.resolver.DefaultArtifact;
+import io.prestosql.catalog.PluginClassLoaderProvider;
 import io.prestosql.connector.ConnectorManager;
 import io.prestosql.eventlistener.EventListenerManager;
 import io.prestosql.execution.resourcegroups.ResourceGroupManager;
@@ -42,29 +58,8 @@ import io.prestosql.spi.type.ParametricType;
 import io.prestosql.spi.type.Type;
 import org.sonatype.aether.artifact.Artifact;
 
-import javax.annotation.concurrent.ThreadSafe;
-import javax.inject.Inject;
-
-import java.io.File;
-import java.io.IOException;
-import java.net.URL;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.List;
-import java.util.ServiceLoader;
-import java.util.Set;
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.function.Supplier;
-
-import static com.google.common.base.Preconditions.checkState;
-import static io.prestosql.metadata.FunctionExtractor.extractFunctions;
-import static io.prestosql.server.PluginDiscovery.discoverPlugins;
-import static io.prestosql.server.PluginDiscovery.writePluginServices;
-import static java.util.Objects.requireNonNull;
-
 @ThreadSafe
-public class PluginManager
-{
+public class PluginManager {
     private static final ImmutableList<String> SPI_PACKAGES = ImmutableList.<String>builder()
             .add("io.prestosql.spi.")
             .add("com.fasterxml.jackson.annotation.")
@@ -101,16 +96,14 @@ public class PluginManager
             CertificateAuthenticatorManager certificateAuthenticatorManager,
             EventListenerManager eventListenerManager,
             GroupProviderManager groupProviderManager,
-            SessionPropertyDefaults sessionPropertyDefaults)
-    {
+            SessionPropertyDefaults sessionPropertyDefaults) {
         requireNonNull(nodeInfo, "nodeInfo is null");
         requireNonNull(config, "config is null");
 
         installedPluginsDir = config.getInstalledPluginsDir();
         if (config.getPlugins() == null) {
             this.plugins = ImmutableList.of();
-        }
-        else {
+        } else {
             this.plugins = ImmutableList.copyOf(config.getPlugins());
         }
         this.resolver = new ArtifactResolver(config.getMavenLocalRepository(), config.getMavenRemoteRepository());
@@ -127,8 +120,7 @@ public class PluginManager
     }
 
     public void loadPlugins()
-            throws Exception
-    {
+            throws Exception {
         if (!pluginsLoading.compareAndSet(false, true)) {
             return;
         }
@@ -149,18 +141,17 @@ public class PluginManager
     }
 
     private void loadPlugin(String plugin)
-            throws Exception
-    {
+            throws Exception {
         log.info("-- Loading plugin %s --", plugin);
         PluginClassLoader pluginClassLoader = buildClassLoader(plugin);
-        try (ThreadContextClassLoader ignored = new ThreadContextClassLoader(pluginClassLoader)) {
+        PluginClassLoaderProvider.put(plugin.substring(plugin.lastIndexOf('/') + 1), pluginClassLoader);
+        try (ThreadContextClassLoader ignored = new ThreadContextClassLoader(PluginClassLoaderProvider.get(plugin))) {
             loadPlugin(pluginClassLoader);
         }
         log.info("-- Finished loading plugin %s --", plugin);
     }
 
-    private void loadPlugin(PluginClassLoader pluginClassLoader)
-    {
+    private void loadPlugin(PluginClassLoader pluginClassLoader) {
         ServiceLoader<Plugin> serviceLoader = ServiceLoader.load(Plugin.class, pluginClassLoader);
         List<Plugin> plugins = ImmutableList.copyOf(serviceLoader);
         checkState(!plugins.isEmpty(), "No service providers of type %s", Plugin.class.getName());
@@ -170,14 +161,12 @@ public class PluginManager
         }
     }
 
-    public void installPlugin(Plugin plugin, Supplier<ClassLoader> duplicatePluginClassLoaderFactory)
-    {
+    public void installPlugin(Plugin plugin, Supplier<ClassLoader> duplicatePluginClassLoaderFactory) {
         installPluginInternal(plugin, duplicatePluginClassLoaderFactory);
         metadataManager.verifyTypes();
     }
 
-    private void installPluginInternal(Plugin plugin, Supplier<ClassLoader> duplicatePluginClassLoaderFactory)
-    {
+    private void installPluginInternal(Plugin plugin, Supplier<ClassLoader> duplicatePluginClassLoaderFactory) {
         for (BlockEncoding blockEncoding : plugin.getBlockEncodings()) {
             log.info("Registering block encoding %s", blockEncoding.getName());
             metadataManager.addBlockEncoding(blockEncoding);
@@ -240,8 +229,7 @@ public class PluginManager
     }
 
     private PluginClassLoader buildClassLoader(String plugin)
-            throws Exception
-    {
+            throws Exception {
         File file = new File(plugin);
         if (file.isFile() && (file.getName().equals("pom.xml") || file.getName().endsWith(".pom"))) {
             return buildClassLoaderFromPom(file);
@@ -253,8 +241,7 @@ public class PluginManager
     }
 
     private PluginClassLoader buildClassLoaderFromPom(File pomFile)
-            throws Exception
-    {
+            throws Exception {
         List<Artifact> artifacts = resolver.resolvePom(pomFile);
         PluginClassLoader classLoader = createClassLoader(artifacts, pomFile.getPath());
 
@@ -271,8 +258,7 @@ public class PluginManager
     }
 
     private PluginClassLoader buildClassLoaderFromDirectory(File dir)
-            throws Exception
-    {
+            throws Exception {
         log.debug("Classpath for %s:", dir.getName());
         List<URL> urls = new ArrayList<>();
         for (File file : listFiles(dir)) {
@@ -283,16 +269,14 @@ public class PluginManager
     }
 
     private PluginClassLoader buildClassLoaderFromCoordinates(String coordinates)
-            throws Exception
-    {
+            throws Exception {
         Artifact rootArtifact = new DefaultArtifact(coordinates);
         List<Artifact> artifacts = resolver.resolveArtifacts(rootArtifact);
         return createClassLoader(artifacts, rootArtifact.toString());
     }
 
     private PluginClassLoader createClassLoader(List<Artifact> artifacts, String name)
-            throws IOException
-    {
+            throws IOException {
         log.debug("Classpath for %s:", name);
         List<URL> urls = new ArrayList<>();
         for (Artifact artifact : sortedArtifacts(artifacts)) {
@@ -306,14 +290,12 @@ public class PluginManager
         return createClassLoader(urls);
     }
 
-    private PluginClassLoader createClassLoader(List<URL> urls)
-    {
+    private PluginClassLoader createClassLoader(List<URL> urls) {
         ClassLoader parent = getClass().getClassLoader();
         return new PluginClassLoader(urls, parent, SPI_PACKAGES);
     }
 
-    private static List<File> listFiles(File installedPluginsDir)
-    {
+    private static List<File> listFiles(File installedPluginsDir) {
         if (installedPluginsDir != null && installedPluginsDir.isDirectory()) {
             File[] files = installedPluginsDir.listFiles();
             if (files != null) {
@@ -324,8 +306,7 @@ public class PluginManager
         return ImmutableList.of();
     }
 
-    private static List<Artifact> sortedArtifacts(List<Artifact> artifacts)
-    {
+    private static List<Artifact> sortedArtifacts(List<Artifact> artifacts) {
         List<Artifact> list = new ArrayList<>(artifacts);
         list.sort(Ordering.natural().nullsLast().onResultOf(Artifact::getFile));
         return list;

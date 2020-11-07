@@ -13,40 +13,43 @@
  */
 package io.prestosql.connector;
 
+import static com.google.common.base.Preconditions.checkArgument;
+import static com.google.common.base.Preconditions.checkState;
+import static com.google.common.base.Verify.verify;
+import static io.prestosql.connector.CatalogName.createInformationSchemaCatalogName;
+import static io.prestosql.connector.CatalogName.createSystemTablesCatalogName;
+import static java.lang.String.format;
+import static java.util.Objects.requireNonNull;
+
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Supplier;
+import javax.annotation.PreDestroy;
+import javax.annotation.concurrent.GuardedBy;
+import javax.annotation.concurrent.ThreadSafe;
+import javax.inject.Inject;
+
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
 import io.airlift.log.Logger;
 import io.airlift.node.NodeInfo;
+import io.prestosql.catalog.PluginClassLoaderProvider;
 import io.prestosql.connector.informationschema.InformationSchemaConnector;
-import io.prestosql.connector.system.DelegatingSystemTablesProvider;
-import io.prestosql.connector.system.MetadataBasedSystemTablesProvider;
-import io.prestosql.connector.system.StaticSystemTablesProvider;
-import io.prestosql.connector.system.SystemConnector;
-import io.prestosql.connector.system.SystemTablesProvider;
+import io.prestosql.connector.system.*;
 import io.prestosql.eventlistener.EventListenerManager;
 import io.prestosql.index.IndexManager;
-import io.prestosql.metadata.Catalog;
-import io.prestosql.metadata.CatalogManager;
-import io.prestosql.metadata.HandleResolver;
-import io.prestosql.metadata.InternalNodeManager;
-import io.prestosql.metadata.MetadataManager;
+import io.prestosql.metadata.*;
 import io.prestosql.security.AccessControlManager;
 import io.prestosql.spi.PageIndexerFactory;
 import io.prestosql.spi.PageSorter;
 import io.prestosql.spi.VersionEmbedder;
 import io.prestosql.spi.classloader.ThreadContextClassLoader;
-import io.prestosql.spi.connector.Connector;
-import io.prestosql.spi.connector.ConnectorAccessControl;
-import io.prestosql.spi.connector.ConnectorContext;
-import io.prestosql.spi.connector.ConnectorFactory;
-import io.prestosql.spi.connector.ConnectorHandleResolver;
-import io.prestosql.spi.connector.ConnectorIndexProvider;
-import io.prestosql.spi.connector.ConnectorNodePartitioningProvider;
-import io.prestosql.spi.connector.ConnectorPageSinkProvider;
-import io.prestosql.spi.connector.ConnectorPageSourceProvider;
-import io.prestosql.spi.connector.ConnectorRecordSetProvider;
-import io.prestosql.spi.connector.ConnectorSplitManager;
-import io.prestosql.spi.connector.SystemTable;
+import io.prestosql.spi.connector.*;
 import io.prestosql.spi.eventlistener.EventListener;
 import io.prestosql.spi.procedure.Procedure;
 import io.prestosql.spi.session.PropertyMetadata;
@@ -60,31 +63,8 @@ import io.prestosql.transaction.TransactionManager;
 import io.prestosql.type.InternalTypeManager;
 import io.prestosql.version.EmbedVersion;
 
-import javax.annotation.PreDestroy;
-import javax.annotation.concurrent.GuardedBy;
-import javax.annotation.concurrent.ThreadSafe;
-import javax.inject.Inject;
-
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
-import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentMap;
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.function.Supplier;
-
-import static com.google.common.base.Preconditions.checkArgument;
-import static com.google.common.base.Preconditions.checkState;
-import static com.google.common.base.Verify.verify;
-import static io.prestosql.connector.CatalogName.createInformationSchemaCatalogName;
-import static io.prestosql.connector.CatalogName.createSystemTablesCatalogName;
-import static java.lang.String.format;
-import static java.util.Objects.requireNonNull;
-
 @ThreadSafe
-public class ConnectorManager
-{
+public class ConnectorManager {
     private static final Logger log = Logger.get(ConnectorManager.class);
 
     private final MetadataManager metadataManager;
@@ -132,8 +112,7 @@ public class ConnectorManager
             PageIndexerFactory pageIndexerFactory,
             TransactionManager transactionManager,
             EventListenerManager eventListenerManager,
-            TypeOperators typeOperators)
-    {
+            TypeOperators typeOperators) {
         this.metadataManager = metadataManager;
         this.catalogManager = catalogManager;
         this.accessControlManager = accessControlManager;
@@ -154,8 +133,7 @@ public class ConnectorManager
     }
 
     @PreDestroy
-    public synchronized void stop()
-    {
+    public synchronized void stop() {
         if (stopped.getAndSet(true)) {
             return;
         }
@@ -164,15 +142,13 @@ public class ConnectorManager
             Connector connector = entry.getValue().getConnector();
             try (ThreadContextClassLoader ignored = new ThreadContextClassLoader(connector.getClass().getClassLoader())) {
                 connector.shutdown();
-            }
-            catch (Throwable t) {
+            } catch (Throwable t) {
                 log.error(t, "Error shutting down connector: %s", entry.getKey());
             }
         }
     }
 
-    public synchronized void addConnectorFactory(ConnectorFactory connectorFactory, Supplier<ClassLoader> duplicatePluginClassLoaderFactory)
-    {
+    public synchronized void addConnectorFactory(ConnectorFactory connectorFactory, Supplier<ClassLoader> duplicatePluginClassLoaderFactory) {
         requireNonNull(connectorFactory, "connectorFactory is null");
         requireNonNull(duplicatePluginClassLoaderFactory, "duplicatePluginClassLoaderFactory is null");
         checkState(!stopped.get(), "ConnectorManager is stopped");
@@ -182,16 +158,14 @@ public class ConnectorManager
         checkArgument(existingConnectorFactory == null, "Connector '%s' is already registered", connectorFactory.getName());
     }
 
-    public synchronized CatalogName createCatalog(String catalogName, String connectorName, Map<String, String> properties)
-    {
+    public synchronized CatalogName createCatalog(String catalogName, String connectorName, Map<String, String> properties) {
         requireNonNull(connectorName, "connectorName is null");
         InternalConnectorFactory connectorFactory = connectorFactories.get(connectorName);
         checkArgument(connectorFactory != null, "No factory for connector '%s'.  Available factories: %s", connectorName, connectorFactories.keySet());
         return createCatalog(catalogName, connectorFactory, properties);
     }
 
-    private synchronized CatalogName createCatalog(String catalogName, InternalConnectorFactory connectorFactory, Map<String, String> properties)
-    {
+    private synchronized CatalogName createCatalog(String catalogName, InternalConnectorFactory connectorFactory, Map<String, String> properties) {
         checkState(!stopped.get(), "ConnectorManager is stopped");
         requireNonNull(catalogName, "catalogName is null");
         requireNonNull(properties, "properties is null");
@@ -206,8 +180,7 @@ public class ConnectorManager
         return catalog;
     }
 
-    private synchronized void createCatalog(CatalogName catalogName, InternalConnectorFactory factory, Map<String, String> properties)
-    {
+    private synchronized void createCatalog(CatalogName catalogName, InternalConnectorFactory factory, Map<String, String> properties) {
         // create all connectors before adding, so a broken connector does not leave the system half updated
         MaterializedConnector connector = new MaterializedConnector(catalogName, createConnector(catalogName, factory, properties));
 
@@ -226,8 +199,7 @@ public class ConnectorManager
             systemTablesProvider = new DelegatingSystemTablesProvider(
                     new StaticSystemTablesProvider(connector.getSystemTables()),
                     new MetadataBasedSystemTablesProvider(metadataManager, catalogName.getCatalogName()));
-        }
-        else {
+        } else {
             systemTablesProvider = new StaticSystemTablesProvider(connector.getSystemTables());
         }
 
@@ -251,8 +223,7 @@ public class ConnectorManager
             addConnectorInternal(systemConnector);
             catalogManager.registerCatalog(catalog);
             handleResolver.addCatalogHandleResolver(catalogName.getCatalogName(), connectorHandleResolver);
-        }
-        catch (Throwable e) {
+        } catch (Throwable e) {
             handleResolver.removeCatalogHandleResolver(catalogName.getCatalogName());
             catalogManager.removeCatalog(catalog.getCatalogName());
             removeConnectorInternal(systemConnector.getCatalogName());
@@ -265,8 +236,7 @@ public class ConnectorManager
                 .forEach(eventListenerManager::addEventListener);
     }
 
-    private synchronized void addConnectorInternal(MaterializedConnector connector)
-    {
+    private synchronized void addConnectorInternal(MaterializedConnector connector) {
         checkState(!stopped.get(), "ConnectorManager is stopped");
         CatalogName catalogName = connector.getCatalogName();
         checkState(!connectors.containsKey(catalogName), "Catalog '%s' already exists", catalogName);
@@ -299,8 +269,7 @@ public class ConnectorManager
         metadataManager.getSessionPropertyManager().addConnectorSessionProperties(catalogName, connector.getSessionProperties());
     }
 
-    public synchronized void dropConnection(String catalogName)
-    {
+    public synchronized void dropConnection(String catalogName) {
         requireNonNull(catalogName, "catalogName is null");
 
         catalogManager.removeCatalog(catalogName).ifPresent(catalog -> {
@@ -312,8 +281,7 @@ public class ConnectorManager
         });
     }
 
-    private synchronized void removeConnectorInternal(CatalogName catalogName)
-    {
+    private synchronized void removeConnectorInternal(CatalogName catalogName) {
         splitManager.removeConnectorSplitManager(catalogName);
         pageSourceManager.removeConnectorPageSourceProvider(catalogName);
         pageSinkManager.removeConnectorPageSinkProvider(catalogName);
@@ -332,58 +300,55 @@ public class ConnectorManager
             Connector connector = materializedConnector.getConnector();
             try (ThreadContextClassLoader ignored = new ThreadContextClassLoader(connector.getClass().getClassLoader())) {
                 connector.shutdown();
-            }
-            catch (Throwable t) {
+            } catch (Throwable t) {
                 log.error(t, "Error shutting down connector: %s", catalogName);
             }
         }
     }
 
-    private Connector createConnector(CatalogName catalogName, InternalConnectorFactory factory, Map<String, String> properties)
-    {
+    private Connector createConnector(CatalogName catalogName, InternalConnectorFactory factory, Map<String, String> properties) {
+        ClassLoader factoryClassLoader = PluginClassLoaderProvider.get(factory.toString());
+        if (factoryClassLoader == null) {
+            factoryClassLoader = factory.getDuplicatePluginClassLoaderFactory().get();
+        }
+        final ClassLoader temp = factoryClassLoader;
         ConnectorContext context = new ConnectorContextInstance(
                 new ConnectorAwareNodeManager(nodeManager, nodeInfo.getEnvironment(), catalogName),
                 versionEmbedder,
                 new InternalTypeManager(metadataManager, typeOperators),
                 pageSorter,
                 pageIndexerFactory,
-                factory.getDuplicatePluginClassLoaderFactory());
+                () -> temp);
 
         try (ThreadContextClassLoader ignored = new ThreadContextClassLoader(factory.getConnectorFactory().getClass().getClassLoader())) {
             return factory.getConnectorFactory().create(catalogName.getCatalogName(), properties, context);
         }
     }
 
-    private static class InternalConnectorFactory
-    {
+    private static class InternalConnectorFactory {
         private final ConnectorFactory connectorFactory;
         private final Supplier<ClassLoader> duplicatePluginClassLoaderFactory;
 
-        public InternalConnectorFactory(ConnectorFactory connectorFactory, Supplier<ClassLoader> duplicatePluginClassLoaderFactory)
-        {
+        public InternalConnectorFactory(ConnectorFactory connectorFactory, Supplier<ClassLoader> duplicatePluginClassLoaderFactory) {
             this.connectorFactory = connectorFactory;
             this.duplicatePluginClassLoaderFactory = duplicatePluginClassLoaderFactory;
         }
 
-        public ConnectorFactory getConnectorFactory()
-        {
+        public ConnectorFactory getConnectorFactory() {
             return connectorFactory;
         }
 
-        public Supplier<ClassLoader> getDuplicatePluginClassLoaderFactory()
-        {
+        public Supplier<ClassLoader> getDuplicatePluginClassLoaderFactory() {
             return duplicatePluginClassLoaderFactory;
         }
 
         @Override
-        public String toString()
-        {
+        public String toString() {
             return connectorFactory.getName();
         }
     }
 
-    private static class MaterializedConnector
-    {
+    private static class MaterializedConnector {
         private final CatalogName catalogName;
         private final Connector connector;
         private final Set<SystemTable> systemTables;
@@ -401,8 +366,7 @@ public class ConnectorManager
         private final List<PropertyMetadata<?>> columnProperties;
         private final List<PropertyMetadata<?>> analyzeProperties;
 
-        public MaterializedConnector(CatalogName catalogName, Connector connector)
-        {
+        public MaterializedConnector(CatalogName catalogName, Connector connector) {
             this.catalogName = requireNonNull(catalogName, "catalogName is null");
             this.connector = requireNonNull(connector, "connector is null");
 
@@ -417,8 +381,7 @@ public class ConnectorManager
             ConnectorSplitManager splitManager = null;
             try {
                 splitManager = connector.getSplitManager();
-            }
-            catch (UnsupportedOperationException ignored) {
+            } catch (UnsupportedOperationException ignored) {
             }
             this.splitManager = Optional.ofNullable(splitManager);
 
@@ -426,8 +389,7 @@ public class ConnectorManager
             try {
                 connectorPageSourceProvider = connector.getPageSourceProvider();
                 requireNonNull(connectorPageSourceProvider, format("Connector '%s' returned a null page source provider", catalogName));
-            }
-            catch (UnsupportedOperationException ignored) {
+            } catch (UnsupportedOperationException ignored) {
             }
 
             try {
@@ -435,8 +397,7 @@ public class ConnectorManager
                 requireNonNull(connectorRecordSetProvider, format("Connector '%s' returned a null record set provider", catalogName));
                 verify(connectorPageSourceProvider == null, "Connector '%s' returned both page source and record set providers", catalogName);
                 connectorPageSourceProvider = new RecordPageSourceProvider(connectorRecordSetProvider);
-            }
-            catch (UnsupportedOperationException ignored) {
+            } catch (UnsupportedOperationException ignored) {
             }
             this.pageSourceProvider = Optional.ofNullable(connectorPageSourceProvider);
 
@@ -444,8 +405,7 @@ public class ConnectorManager
             try {
                 connectorPageSinkProvider = connector.getPageSinkProvider();
                 requireNonNull(connectorPageSinkProvider, format("Connector '%s' returned a null page sink provider", catalogName));
-            }
-            catch (UnsupportedOperationException ignored) {
+            } catch (UnsupportedOperationException ignored) {
             }
             this.pageSinkProvider = Optional.ofNullable(connectorPageSinkProvider);
 
@@ -453,8 +413,7 @@ public class ConnectorManager
             try {
                 indexProvider = connector.getIndexProvider();
                 requireNonNull(indexProvider, format("Connector '%s' returned a null index provider", catalogName));
-            }
-            catch (UnsupportedOperationException ignored) {
+            } catch (UnsupportedOperationException ignored) {
             }
             this.indexProvider = Optional.ofNullable(indexProvider);
 
@@ -462,16 +421,14 @@ public class ConnectorManager
             try {
                 partitioningProvider = connector.getNodePartitioningProvider();
                 requireNonNull(partitioningProvider, format("Connector '%s' returned a null partitioning provider", catalogName));
-            }
-            catch (UnsupportedOperationException ignored) {
+            } catch (UnsupportedOperationException ignored) {
             }
             this.partitioningProvider = Optional.ofNullable(partitioningProvider);
 
             ConnectorAccessControl accessControl = null;
             try {
                 accessControl = connector.getAccessControl();
-            }
-            catch (UnsupportedOperationException ignored) {
+            } catch (UnsupportedOperationException ignored) {
             }
             this.accessControl = Optional.ofNullable(accessControl);
 
@@ -500,83 +457,67 @@ public class ConnectorManager
             this.analyzeProperties = ImmutableList.copyOf(analyzeProperties);
         }
 
-        public CatalogName getCatalogName()
-        {
+        public CatalogName getCatalogName() {
             return catalogName;
         }
 
-        public Connector getConnector()
-        {
+        public Connector getConnector() {
             return connector;
         }
 
-        public Set<SystemTable> getSystemTables()
-        {
+        public Set<SystemTable> getSystemTables() {
             return systemTables;
         }
 
-        public Set<Procedure> getProcedures()
-        {
+        public Set<Procedure> getProcedures() {
             return procedures;
         }
 
-        public Optional<ConnectorSplitManager> getSplitManager()
-        {
+        public Optional<ConnectorSplitManager> getSplitManager() {
             return splitManager;
         }
 
-        public Optional<ConnectorPageSourceProvider> getPageSourceProvider()
-        {
+        public Optional<ConnectorPageSourceProvider> getPageSourceProvider() {
             return pageSourceProvider;
         }
 
-        public Optional<ConnectorPageSinkProvider> getPageSinkProvider()
-        {
+        public Optional<ConnectorPageSinkProvider> getPageSinkProvider() {
             return pageSinkProvider;
         }
 
-        public Optional<ConnectorIndexProvider> getIndexProvider()
-        {
+        public Optional<ConnectorIndexProvider> getIndexProvider() {
             return indexProvider;
         }
 
-        public Optional<ConnectorNodePartitioningProvider> getPartitioningProvider()
-        {
+        public Optional<ConnectorNodePartitioningProvider> getPartitioningProvider() {
             return partitioningProvider;
         }
 
-        public Optional<ConnectorAccessControl> getAccessControl()
-        {
+        public Optional<ConnectorAccessControl> getAccessControl() {
             return accessControl;
         }
 
-        public List<EventListener> getEventListeners()
-        {
+        public List<EventListener> getEventListeners() {
             return eventListeners;
         }
 
-        public List<PropertyMetadata<?>> getSessionProperties()
-        {
+        public List<PropertyMetadata<?>> getSessionProperties() {
             return sessionProperties;
         }
 
-        public List<PropertyMetadata<?>> getTableProperties()
-        {
+        public List<PropertyMetadata<?>> getTableProperties() {
             return tableProperties;
         }
 
-        public List<PropertyMetadata<?>> getColumnProperties()
-        {
+        public List<PropertyMetadata<?>> getColumnProperties() {
             return columnProperties;
         }
 
-        public List<PropertyMetadata<?>> getSchemaProperties()
-        {
+        public List<PropertyMetadata<?>> getSchemaProperties() {
             return schemaProperties;
         }
 
-        public List<PropertyMetadata<?>> getAnalyzeProperties()
-        {
+        public List<PropertyMetadata<?>> getAnalyzeProperties() {
             return analyzeProperties;
         }
     }
