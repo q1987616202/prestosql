@@ -17,7 +17,7 @@ cp /data/presto/presto-main-345.jar /data/presto/presto-main-345.jar.original
 
 > start.sh
 
-这里的19565的jvm运行的port，可以本地进行远程debug，方便调试
+这里的19565是jvm运行的port，可以本地进行远程debug，方便调试
 
 需要在presto的jvm.config追加一行，jdk11写法
 
