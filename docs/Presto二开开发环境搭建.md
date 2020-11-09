@@ -118,6 +118,12 @@ presto二开
 
 拉取本项目，切换到dynamic-catalog-zk3.4.x分支
 
+```
+git clone https://github.com/thestyleofme/prestosql.git
+cd prestosql
+git checkout dynamic-catalog-zk3.4.x
+```
+
 大多开发者本地都安装的是java8，这里可以使用idea自行下载java11，然后使用idea maven的execute maven goal执行如下命令，若本地就是java11，直接执行即可
 
 ![image](images/idea-maven-execute.png)
