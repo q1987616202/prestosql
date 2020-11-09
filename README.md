@@ -28,6 +28,8 @@ Presto Dynamic Catalog, based ZooKeeper, rest api is provided for catalog curd, 
 * Presto, 345
 * zookeeper, 3.4.14
 
+![image](docs/images/dynamic-catalog-introduction.png)
+
 详情请查看文档 [Presto Dynamic Catalog](docs/Presto二开开发环境搭建.md) 
 
 see [Presto Dynamic Catalog](docs/Presto二开开发环境搭建.md) for more information about Presto Dynamic Catalog
