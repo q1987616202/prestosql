@@ -56,7 +56,7 @@ public class CatalogResource {
     }
 
     private void check() {
-        if (enabledDynamic) {
+        if (!enabledDynamic) {
             throw DynamicCatalogException.newInstance("please set catalog.dynamic.enabled=true in node.properties");
         }
     }
