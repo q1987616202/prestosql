@@ -35,39 +35,50 @@ import org.apache.curator.retry.ExponentialBackoffRetry;
 public class DynamicCatalogStoreConfig {
 
     private static final Logger log = Logger.get(DynamicCatalogStoreConfig.class);
+    private String dynamicEnabled;
     private String zkAddress;
     private String nodePath;
     private String namespace;
     private CuratorFramework curatorFramework;
 
+    @Config("catalog.dynamic.enabled")
+    public DynamicCatalogStoreConfig setDynamicEnabled(String dynamicEnabled) {
+        this.dynamicEnabled = dynamicEnabled;
+        return this;
+    }
+
+    public boolean getDynamicEnabled() {
+        return Boolean.parseBoolean(Objects.requireNonNullElse(dynamicEnabled, "true"));
+    }
+
     @Config("catalog.zk.address")
     public DynamicCatalogStoreConfig setCatalogZkAddress(String zkAddress) {
-        this.zkAddress = zkAddress != null && !"".equals(zkAddress.trim()) ? zkAddress : "127.0.0.1:2181";
+        this.zkAddress = zkAddress;
         return this;
     }
 
     public String getCatalogZkAddress() {
-        return zkAddress;
+        return Objects.requireNonNullElse(zkAddress, "127.0.0.1:2181");
     }
 
     @Config("catalog.zk.namespace")
     public DynamicCatalogStoreConfig setCatalogZkNamespace(String namespace) {
-        this.namespace = namespace != null && !"".equals(namespace.trim()) ? namespace : "presto";
+        this.namespace = namespace;
         return this;
     }
 
     public String getCatalogZkNamespace() {
-        return namespace;
+        return Objects.requireNonNullElse(namespace, "presto");
     }
 
     @Config("catalog.zk.path")
     public DynamicCatalogStoreConfig setCatalogZkPath(String nodePath) {
-        this.nodePath = nodePath != null && !"".equals(nodePath.trim()) ? nodePath : "/catalog/meta";
+        this.nodePath = nodePath;
         return this;
     }
 
     public String getCatalogZkPath() {
-        return nodePath;
+        return Objects.requireNonNullElse(nodePath, "/catalog/meta");
     }
 
     public CuratorFramework getCuratorFramework() {

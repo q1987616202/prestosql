@@ -293,8 +293,8 @@ public class ServerMainModule
         // metadata
         binder.bind(DynamicCatalogStore.class).in(Scopes.SINGLETON);
         configBinder(binder).bindConfig(DynamicCatalogStoreConfig.class);
-        // binder.bind(StaticCatalogStore.class).in(Scopes.SINGLETON);
-        // configBinder(binder).bindConfig(StaticCatalogStoreConfig.class);
+        binder.bind(StaticCatalogStore.class).in(Scopes.SINGLETON);
+        configBinder(binder).bindConfig(StaticCatalogStoreConfig.class);
         binder.bind(MetadataManager.class).in(Scopes.SINGLETON);
         binder.bind(Metadata.class).to(MetadataManager.class).in(Scopes.SINGLETON);
         binder.bind(TypeOperatorsCache.class).in(Scopes.SINGLETON);

@@ -46,11 +46,19 @@ public class CatalogResource {
 
     private final DynamicCatalogStoreConfig config;
     private final String catalogZkPath;
+    private final boolean enabledDynamic;
 
     @Inject
     public CatalogResource(DynamicCatalogStoreConfig config) {
         this.config = config;
         this.catalogZkPath = config.getCatalogZkPath();
+        this.enabledDynamic = config.getDynamicEnabled();
+    }
+
+    private void check() {
+        if (enabledDynamic) {
+            throw DynamicCatalogException.newInstance("please set catalog.dynamic.enabled=true in node.properties");
+        }
     }
 
     @GET
@@ -65,6 +73,7 @@ public class CatalogResource {
     @Consumes(MediaType.APPLICATION_JSON)
     @Produces(MediaType.APPLICATION_JSON)
     public List<CatalogInfo> list() {
+        check();
         try {
             List<String> list = config.getCuratorFramework().getChildren().forPath(catalogZkPath);
             return list.stream()
@@ -91,6 +100,7 @@ public class CatalogResource {
     @Consumes(MediaType.APPLICATION_JSON)
     @Produces(MediaType.APPLICATION_JSON)
     public CatalogInfo detail(@PathParam("catalogName") String catalogName) {
+        check();
         try {
             byte[] bytes = config.getCuratorFramework().getData().forPath(catalogZkPath + "/" + catalogName);
             return JsonUtil.toObj(new String(bytes, StandardCharsets.UTF_8), CatalogInfo.class);
@@ -111,6 +121,7 @@ public class CatalogResource {
     @Consumes(MediaType.APPLICATION_JSON)
     @Produces(MediaType.APPLICATION_JSON)
     public void save(CatalogInfo catalogInfo) {
+        check();
         try {
             requireNonNull(catalogInfo.getCatalogName(), "catalog can not be null");
             requireNonNull(catalogInfo.getConnectorName(), "connectorName can not be null");
@@ -131,6 +142,7 @@ public class CatalogResource {
     @Path("{catalogName}")
     @ResourceSecurity(PUBLIC)
     public void delete(@PathParam("catalogName") String catalogName) {
+        check();
         try {
             config.getCuratorFramework().delete().guaranteed().deletingChildrenIfNeeded()
                     .withVersion(-1)

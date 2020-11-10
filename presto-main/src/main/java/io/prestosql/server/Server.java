@@ -57,6 +57,7 @@ import io.prestosql.execution.resourcegroups.ResourceGroupManager;
 import io.prestosql.execution.warnings.WarningCollectorModule;
 import io.prestosql.metadata.Catalog;
 import io.prestosql.metadata.CatalogManager;
+import io.prestosql.metadata.StaticCatalogStore;
 import io.prestosql.security.AccessControlManager;
 import io.prestosql.security.AccessControlModule;
 import io.prestosql.security.GroupProviderManager;
@@ -113,8 +114,12 @@ public class Server {
 
             injector.getInstance(PluginManager.class).loadPlugins();
 
-            // injector.getInstance(StaticCatalogStore.class).loadCatalogs();
-            injector.getInstance(DynamicCatalogStore.class).loadCatalogs();
+            DynamicCatalogStore dynamicCatalogStore = injector.getInstance(DynamicCatalogStore.class);
+            if (dynamicCatalogStore.isEnabledDynamic()) {
+                dynamicCatalogStore.loadCatalogs();
+            } else {
+                injector.getInstance(StaticCatalogStore.class).loadCatalogs();
+            }
 
             // TODO: remove this huge hack
             updateConnectorIds(injector.getInstance(Announcer.class), injector.getInstance(CatalogManager.class));

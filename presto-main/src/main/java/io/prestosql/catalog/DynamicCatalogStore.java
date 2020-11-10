@@ -71,6 +71,10 @@ public class DynamicCatalogStore {
         return catalogsLoaded.get();
     }
 
+    public boolean isEnabledDynamic() {
+        return dynamicCatalogStoreConfig.getDynamicEnabled();
+    }
+
     public void loadCatalogs() {
         if (!catalogsLoading.compareAndSet(false, true)) {
             return;

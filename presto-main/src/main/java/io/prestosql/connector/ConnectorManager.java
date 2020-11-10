@@ -307,18 +307,19 @@ public class ConnectorManager {
     }
 
     private Connector createConnector(CatalogName catalogName, InternalConnectorFactory factory, Map<String, String> properties) {
-        ClassLoader factoryClassLoader = PluginClassLoaderProvider.get(factory.toString());
-        if (factoryClassLoader == null) {
-            factoryClassLoader = factory.getDuplicatePluginClassLoaderFactory().get();
-        }
-        final ClassLoader temp = factoryClassLoader;
         ConnectorContext context = new ConnectorContextInstance(
                 new ConnectorAwareNodeManager(nodeManager, nodeInfo.getEnvironment(), catalogName),
                 versionEmbedder,
                 new InternalTypeManager(metadataManager, typeOperators),
                 pageSorter,
                 pageIndexerFactory,
-                () -> temp);
+                () -> {
+                    ClassLoader factoryClassLoader = PluginClassLoaderProvider.get(factory.toString());
+                    if (factoryClassLoader == null) {
+                        factoryClassLoader = factory.getDuplicatePluginClassLoaderFactory().get();
+                    }
+                    return factoryClassLoader;
+                });
 
         try (ThreadContextClassLoader ignored = new ThreadContextClassLoader(factory.getConnectorFactory().getClass().getClassLoader())) {
             return factory.getConnectorFactory().create(catalogName.getCatalogName(), properties, context);

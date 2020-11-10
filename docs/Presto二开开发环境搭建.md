@@ -110,7 +110,7 @@ presto> select * from mysql.hdsp_core.xcor_sys_config AS a left join hive.terry.
 >
 > http://172.23.16.78:29527
 
-## 4. presto热加载catalog
+## 4. presto动态catalog
 
 presto二开
 
@@ -158,11 +158,15 @@ node.environment=docker
 node.data-dir=/data/presto
 
 # extra
+catalog.dynamic.enabled=true
 catalog.zk.address=172.23.16.70:2181,172.23.16.71:2181,172.23.16.72:2181
 catalog.zk.namespace=presto
 catalog.zk.path=/catalog/meta
 ```
 
+* catalog.dynamic.enabled
+    - 是否启用catalog动态加载，默认true，若设置为false，就跟原生的一样，加载etc/catalog/xxx.properties去创建catalog
+    - catalog.dynamic.enabled=true，下面的设置才有效
 * catalog.zk.address
     - catalog注册的zookeeper地址
 * catalog.zk.namespace
